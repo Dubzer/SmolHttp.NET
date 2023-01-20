@@ -10,7 +10,7 @@ public class HttpServer
     private readonly TcpListener _server;
     private readonly FileExtensionContentTypeProvider _fileExtensionProvider = new();
     private readonly RotatableIndex _rotatableIndex = new();
-
+    private const string BadRequestResponse = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n";
     public HttpServer(IPEndPoint endPoint)
     {
         _server = new TcpListener(endPoint);
@@ -76,6 +76,13 @@ public class HttpServer
         ArrayPool<char>.Shared.Return(rentedArray);
 
         var requestUri = requestHeader.Split(' ')[1][1..];
+        if (!UrlValidator.IsValidUrl(requestUri))
+        {
+            await stream.WriteAsync(Encoding.UTF8.GetBytes(BadRequestResponse));
+            await stream.DisposeAsync();
+            Console.WriteLine($"Closed connection {index}: bad request");
+            return;
+        }
         if(string.IsNullOrEmpty(requestUri) || !_fileExtensionProvider.TryGetContentType(
                requestUri
                    .Split('/', StringSplitOptions.RemoveEmptyEntries)
