@@ -83,11 +83,8 @@ public class HttpServer
             Console.WriteLine($"Closed connection {index}: bad request");
             return;
         }
-        if(string.IsNullOrEmpty(requestUri) || !_fileExtensionProvider.TryGetContentType(
-               requestUri
-                   .Split('/', StringSplitOptions.RemoveEmptyEntries)
-                   .Last(), out var contentType))
-            contentType = "text/plain";
+
+        var contentType = GetContentType(requestUri);
 
         var filePath = Path.Combine(Environment.CurrentDirectory, requestUri);
         await using var file = File.OpenRead(filePath);
@@ -101,5 +98,17 @@ public class HttpServer
 
         Console.WriteLine("Sent response: " + index);
         await Task.Run(() => ProcessRequest(client, stream, index));
+    }
+
+    private string GetContentType(string path)
+    {
+        if (string.IsNullOrEmpty(path))
+            return "text/plain";
+
+        var lastSegment = path[path.LastIndexOf('/')..];
+
+        return _fileExtensionProvider.TryGetContentType(lastSegment, out var contentType)
+            ? contentType
+            : "text/plain";
     }
 }
