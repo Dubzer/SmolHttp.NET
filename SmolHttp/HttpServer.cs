@@ -1,4 +1,5 @@
 ﻿using System.Buffers;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -10,6 +11,9 @@ public class HttpServer
     private readonly TcpListener _server;
     private readonly FileExtensionContentTypeProvider _fileExtensionProvider = new();
     private readonly RotatableIndex _rotatableIndex = new();
+
+    private const string PlainTextContentType = "text/plain";
+    private const string TimeoutConnectionExceptionMessage = "timeout connection";
     private const string BadRequestResponse = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n";
     public HttpServer(IPEndPoint endPoint)
     {
@@ -28,6 +32,7 @@ public class HttpServer
             Console.WriteLine("New client connected: " + connectionIndex);
 
             var stream = client.GetStream();
+            Task.Factory.StartNew(_, TaskCreationOptions.RunContinuationsAsynchronously)
             _ = Task.Run(async () =>
             {
                 try
@@ -47,7 +52,7 @@ public class HttpServer
         }
     }
 
-    async Task ProcessRequest(TcpClient client, NetworkStream stream, uint index)
+    private async Task ProcessRequest(TcpClient client, NetworkStream stream, uint index)
     {
         using var streamReader = new StreamReader(stream);
         try
@@ -55,16 +60,19 @@ public class HttpServer
             uint delayedTimes = 0;
             while (client.Client.Available == 0)
             {
+                Console.WriteLine(delayedTimes);
                 if (++delayedTimes == 100)
-                    throw new TimeoutException("timeout connection");
+                    throw new TimeoutException(TimeoutConnectionExceptionMessage);
 
                 await Task.Delay(100).ConfigureAwait(false);
             }
         }
         catch (Exception e)
         {
+            var stopwatch = Stopwatch.StartNew();
             await stream.DisposeAsync();
             Console.WriteLine($"Closed connection {index}: " + e.Message);
+            Console.WriteLine("Took: " + stopwatch.Elapsed);
             return;
         }
 
@@ -75,7 +83,7 @@ public class HttpServer
         var requestHeader = buffer[..buffer.Span.IndexOf('\r')].ToString();
         ArrayPool<char>.Shared.Return(rentedArray);
 
-        var requestUri = requestHeader.Split(' ')[1][1..];
+        var requestUri = requestHeader.Split(' ')[1];
         if (!UrlValidator.IsValidUrl(requestUri))
         {
             await stream.WriteAsync(Encoding.UTF8.GetBytes(BadRequestResponse));
@@ -86,29 +94,37 @@ public class HttpServer
 
         var contentType = GetContentType(requestUri);
 
-        var filePath = Path.Combine(Environment.CurrentDirectory, requestUri);
+        var filePath = Path.Combine(Environment.CurrentDirectory, requestUri[1..]);
         await using var file = File.OpenRead(filePath);
         var responseHeaders = $"HTTP/1.1 200 OK\n" +
                               $"Date: {DateTime.Now.ToUniversalTime():R}\n" +
                               $"Content-Length: {file.Length}\n" +
                               $"Content-Type: {contentType};charset=utf-8\n\n";
 
-        await stream.WriteAsync(Encoding.UTF8.GetBytes(responseHeaders));
-        await file.CopyToAsync(stream);
+        try
+        {
+            await stream.WriteAsync(Encoding.UTF8.GetBytes(responseHeaders));
+            await file.CopyToAsync(stream);
 
-        Console.WriteLine("Sent response: " + index);
-        await Task.Run(() => ProcessRequest(client, stream, index));
+            Console.WriteLine("Sent response: " + index);
+            await Task.Run(() => ProcessRequest(client, stream, index));
+        }
+        catch (IOException e)
+        {
+            await stream.DisposeAsync();
+            Console.WriteLine($"Closed connection {index}: " + e.Message);
+        }
     }
 
     private string GetContentType(string path)
     {
         if (string.IsNullOrEmpty(path))
-            return "text/plain";
+            return PlainTextContentType;
 
         var lastSegment = path[path.LastIndexOf('/')..];
 
         return _fileExtensionProvider.TryGetContentType(lastSegment, out var contentType)
             ? contentType
-            : "text/plain";
+            : PlainTextContentType;
     }
 }
