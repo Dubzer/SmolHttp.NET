@@ -32,7 +32,6 @@ public class HttpServer
             Console.WriteLine("New client connected: " + connectionIndex);
 
             var stream = client.GetStream();
-            Task.Factory.StartNew(_, TaskCreationOptions.RunContinuationsAsynchronously)
             _ = Task.Run(async () =>
             {
                 try
