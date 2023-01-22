@@ -69,10 +69,8 @@ public class HttpServer
         }
         catch (Exception e)
         {
-            var stopwatch = Stopwatch.StartNew();
             await stream.DisposeAsync();
             Console.WriteLine($"Closed connection {index}: " + e.Message);
-            Console.WriteLine("Took: " + stopwatch.Elapsed);
             return;
         }
 
